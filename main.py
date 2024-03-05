@@ -99,8 +99,19 @@ def main(args: argparse.Namespace):
     elif args.interactive:
         interactive_plot(df, lc_names, args)
     elif args.liquid:
-        assert (any(args.liquid in x for x in lc_names))
-        # NOT IMPLEMENTED
+        if any(args.liquid in x for x in lc_names):
+            step_data = get_data_for_liquid_class(df, args.liquid)
+            path = None
+            if args.plot:
+                path = args.plot
+                create_out_dir(path.parent)
+            elif args.outdir:
+                path = gen_plot_name(args.infile, args.liquid, args.outdir)
+            plot_both_steps(step_data, path, args.noshow)
+        else:
+            logging.error(f"No match for '{args.liquid}'. "
+                "You only have to specify a part of the name "
+                "unique to that class (case-sensitive).")
 
 
 def gen_plot_name(source_name: str, liquid_class: str, dir_path: Path) -> Path:

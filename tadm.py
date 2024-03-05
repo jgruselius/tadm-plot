@@ -1,10 +1,9 @@
 from enum import IntEnum
 import numpy as np
-import pandas as pd
+import polars as pl
 import pyodbc
 import platform
 import logging
-import warnings
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -52,38 +51,40 @@ def get_driver() -> str:
             raise NotImplementedError("OS must be either Windows or Linux")
 
 
-def get_data_for_step(df: pd.DataFrame, liquid_class: str, step_type: StepType) -> pd.DataFrame:
-    step_data = df[(df["LiquidClassName"].str.contains(liquid_class)) & (df["StepType"] == step_type)]
+def get_data_for_step(df: pl.DataFrame, liquid_class: str, step_type: StepType) -> pl.DataFrame:
+    step_data = df.filter(
+        pl.col("LiquidClassName").str.contains(liquid_class) & 
+        df["StepType"] == step_type)
     return step_data
 
 
-def get_data_for_liquid_class(df: pd.DataFrame, liquid_class: str) -> pd.DataFrame:
-    step_data = df[df["LiquidClassName"].str.contains(liquid_class)]
+def get_data_for_liquid_class(df: pl.DataFrame, liquid_class: str) -> pl.DataFrame:
+    step_data = df.filter(pl.col("LiquidClassName").str.contains(liquid_class))
     return step_data
 
 
-def calc_y_limits(step_data: pd.DataFrame) -> tuple:
-    y_max = np.max(step_data["TADM"].apply(np.max))
-    y_min = np.min(step_data["TADM"].apply(np.min))
+def calc_y_limits(step_data: pl.DataFrame) -> tuple:
+    y_max = step_data.select(pl.col("TADM").list.max().max()).item()
+    y_min = step_data.select(pl.col("TADM").list.min().min()).item()
     return y_min-100, y_max+100
 
 
-def calc_x_limits(step_data: pd.DataFrame) -> tuple:
-    x_max = np.max(step_data["TADM"].apply(np.size))
+def calc_x_limits(step_data: pl.DataFrame) -> tuple:
+    x_max = step_data.select(pl.col("TADM").list.len().max()).item()
     return 0, x_max
 
 
-def plot_both_steps(data: pd.DataFrame, out_plot=None, noshow=False, backend="tkAgg"):
+def plot_both_steps(data: pl.DataFrame, out_plot=None, noshow=False, backend="tkAgg"):
     # Use potentially faster backend for non-interactive plotting:
     # (it does not seem compatible with pyinstaller)
-    #if noshow:
+    # if noshow:
     #   mpl.use("Agg")
     mpl.use(backend)
 
     cols = ["cornflowerblue", "orange", "mediumseagreen", "mediumorchid"]
 
     fig, (ax1, ax2) = plt.subplots(nrows=2, constrained_layout=True, figsize=(12, 9))
-    fig.suptitle(data.iloc[0]["LiquidClassName"])
+    fig.suptitle(data.select("LiquidClassName").item(0, 0))
 
     # Takes the array of y values and adds a column of x 0..len(y):
     def _cstack(x):
@@ -97,53 +98,39 @@ def plot_both_steps(data: pd.DataFrame, out_plot=None, noshow=False, backend="tk
         axis.set_xlabel("Time (10 us)")
         axis.set_ylabel("Pressure")
 
-        # Manual calculation of y limits (probably not needed):
-        # step = data[data["StepType"] == step_type]
-        # lower = step.iloc[0]["LowerToleranceBandTADM"]
-        # upper = step.iloc[0]["UpperToleranceBandTADM"]
-        # y_max = np.max(step["TADM"].apply(np.max))
-        # y_max = np.max((y_max, np.max(upper[1::2])))
-        # y_min = np.min(step["TADM"].apply(np.min))
-        # y_min = np.min((y_min, np.min(lower[1::2])))
-        # axis.set_ylim(y_min-100, y_max+100)
-
-        step_data = data[data["StepType"] == step_type]
+        step_data = data.filter(pl.col("StepType") == step_type)
 
         # Plot the tolerance bands:
         for band in ("LowerToleranceBandTADM", "UpperToleranceBandTADM"):
-            # even indices are the x break points, odd indices give the pressure value at the
-            # pre-ceding x:
-            first = step_data.iloc[0][band]
-            if np.all(np.isnan(first)):
-                lc_name = step_data.iloc[0]["LiquidClassName"]
+            first = step_data.select(band).item(0, 0)
+            if first is None:
+                lc_name = step_data.select("LiquidClassName").item(0, 0)
                 logging.warning(f"No {band} present for {step_type} of {lc_name}")
                 y_lims = calc_y_limits(step_data)
                 axis.set_ylim(*y_lims)
                 x_lims = calc_x_limits(step_data)
                 axis.set_xlim(*x_lims)
             else:
-                x = first[::2]  # odd indices
+                # even indices are the x break points, odd indices give the pressure value at the
+                # pre-ceding x:
+                x = first[::2]   # odd indices
                 y = first[1::2]  # even indices
                 axis.plot(x, y, color="#cccccc", linewidth=2, linestyle="solid", alpha=0.75)
 
         # Plot the curvepoints for all transfers using LineCollection:
-        for i, g in step_data.groupby("ChannelNumber"):
+        for i, (key, val) in enumerate(step_data.group_by("ChannelNumber", maintain_order=True)):
             lc = LineCollection(
-                [_cstack(y) for y in g["TADM"]],
+                [_cstack(y) for y in val.get_column("TADM")],
                 linewidth=0.5,
-                color=cols[i-1],
+                color=cols[i],
                 alpha=1,
-                label=f"Channel {i}",
+                label=f"Channel {i+1}"
             )
             axis.add_collection(lc)
             lcs.append(lc)
 
-    n_channels = step_data["ChannelNumber"].nunique()
-    plt.legend(
-        handles=lcs[:n_channels],
-        # [f"Channel {i+1}" for i in range(len(cols))],
-        loc="upper left",
-    )
+    n_channels = step_data.select(pl.col("ChannelNumber")).n_unique()
+    plt.legend(handles=lcs[:n_channels], loc="upper left")
 
     if out_plot:
         fig.savefig(out_plot, bbox_inches="tight")
@@ -157,52 +144,46 @@ def plot_both_steps(data: pd.DataFrame, out_plot=None, noshow=False, backend="tk
     plt.close()
 
 
-def import_tadm_data(dbpath: str) -> pd.DataFrame:
+def bin_to_int(byte_string: bytes):
+    return pl.Series(np.frombuffer(byte_string, dtype=np.int16))
+
+
+def import_tadm_data(dbpath: str) -> pl.DataFrame:
     # connection object should be closed automatically when it goes out of
     # scope, but you can explicitly call close() also. Using the context
     # manager does something else, see doc.
     conn = pyodbc.connect(f"Driver={get_driver()};DBQ={dbpath};")
     query = "SELECT CurveId,LiquidClassName,StepType,Volume,TimeStamp,StepNumber,ChannelNumber,CurvePoints FROM TadmCurve"
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=UserWarning)
-        df = pd.read_sql(query, conn)
-    df["TADM"] = df["CurvePoints"].apply(lambda x: np.frombuffer(x, np.int16))
-
+    
+    df = pl.read_database(query, conn)
+    df = df.with_columns(pl.col("CurvePoints").map_elements(bin_to_int).alias("TADM"))
+    
     return df
 
 
-def import_tolerance_band_data(dbpath: str, lc_names: set[str]) -> pd.DataFrame:
+def import_tolerance_band_data(dbpath: str, lc_names: set[str]) -> pl.DataFrame:
     conn = pyodbc.connect(f"Driver={get_driver()};DBQ={dbpath};")
     query = "SELECT LiquidClassId,LiquidClassName FROM LiquidClass"
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=UserWarning)
-        df = pd.read_sql(query, conn)
+    df = pl.read_database(query, conn)
+    df = df.filter(pl.col("LiquidClassName").is_in(lc_names))
 
-    df = df[df["LiquidClassName"].isin(lc_names)]
     query = "SELECT LiquidClassId,StepType,LowerToleranceBand,UpperToleranceBand FROM TadmToleranceBand"
+    data = pl.read_database(query, conn)
+    data = data.with_columns((
+        pl.col("LowerToleranceBand").map_elements(bin_to_int).alias("LowerToleranceBandTADM"),
+        pl.col("UpperToleranceBand").map_elements(bin_to_int).alias("UpperToleranceBandTADM")
+    ))
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=UserWarning)
-        data = pd.read_sql(query, conn)
-
-    data["LowerToleranceBandTADM"] = data["LowerToleranceBand"].apply(
-        lambda x: np.frombuffer(x, np.int16)
-    )
-    data["UpperToleranceBandTADM"] = data["UpperToleranceBand"].apply(
-        lambda x: np.frombuffer(x, np.int16)
-    )
-
-    data = pd.merge(df, data, how="inner", on="LiquidClassId")
+    data = data.join(df, how="inner", on="LiquidClassId")
 
     return data
 
 
-def merge_tadm_and_tolerance_data(tadm_data: pd.DataFrame, tol_band_data: pd.DataFrame) -> pd.DataFrame:
-    return pd.merge(tadm_data, tol_band_data, how="left", on=["LiquidClassName", "StepType"])
+def merge_tadm_and_tolerance_data(tadm_data: pl.DataFrame, tol_band_data: pl.DataFrame) -> pl.DataFrame:
+    return(tadm_data.join(tol_band_data, how="left", on=["LiquidClassName", "StepType"]))
 
 
-def get_liquid_class_names(df: pd.DataFrame) -> set[str]:
-    lc_names = set(df["LiquidClassName"].unique())
+def get_liquid_class_names(df: pl.DataFrame) -> set[str]:
+    lc_names = set(df.get_column("LiquidClassName").unique())
     return lc_names
