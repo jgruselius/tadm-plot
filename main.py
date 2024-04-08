@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from rich.logging import RichHandler
 from InquirerPy import inquirer
 from rich.progress import Progress, TextColumn, BarColumn, MofNCompleteColumn, TimeRemainingColumn
+from typing import TypeAlias
 
 from tadm import import_tadm_data, get_liquid_class_names, import_tolerance_band_data, \
     merge_tadm_and_tolerance_data, get_data_for_liquid_class, plot_both_steps, check_driver
@@ -21,6 +22,10 @@ from tadm import import_tadm_data, get_liquid_class_names, import_tolerance_band
 #  [x] Progress display for '-all'
 #  [x] Detect when ODBC driver is not installed and print guide
 #  [x] Add option for the liquid class database to use
+
+LiquidClasses: TypeAlias = list[str] | set[str]
+# or with Python 3.12:
+# type LiquidClasses = list[str] | set[str]
 
 
 # Print instructions for installing ODBC driver:
@@ -46,10 +51,10 @@ def create_progress_bar() -> Progress:
     )
 
 
-def interactive_plot(df, lc_names: list[str], args: argparse.Namespace):
+def interactive_plot(df, lc_names: LiquidClasses, args: argparse.Namespace):
     while True:
         lc = inquirer.fuzzy(
-            message="Select liquid:", choices=lc_names,
+            message="Select liquid:", choices=list(lc_names),  # in case of set to satisfy mypy
             instruction="Type or use the up/down arrow keys",
             long_instruction="Type a few letters of the liquid class name and press ENTER to select the highlighted value").execute()
         step_data = get_data_for_liquid_class(df, lc)
@@ -58,7 +63,7 @@ def interactive_plot(df, lc_names: list[str], args: argparse.Namespace):
             break
 
 
-def export_all(df, lc_names: list[str], args: argparse.Namespace):
+def export_all(df, lc_names: LiquidClasses, args: argparse.Namespace):
     progress_bar = create_progress_bar()
     with progress_bar:
         for lc in progress_bar.track(lc_names, description="Generating plots..."):
@@ -69,7 +74,7 @@ def export_all(df, lc_names: list[str], args: argparse.Namespace):
             plot_both_steps(step_data, file_path, True)
 
 
-def export_all_parallel(df, lc_names: list[str], args: argparse.Namespace):
+def export_all_parallel(df, lc_names: LiquidClasses, args: argparse.Namespace):
     progress_bar = create_progress_bar()
     with progress_bar:
         task = progress_bar.add_task("Generating plots...", total=len(lc_names))
