@@ -54,7 +54,7 @@ def get_driver() -> str:
 def get_data_for_step(df: pl.DataFrame, liquid_class: str, step_type: StepType) -> pl.DataFrame:
     step_data = df.filter(
         pl.col("LiquidClassName").str.contains(liquid_class) & 
-        df["StepType"] == step_type)
+        pl.col("StepType") == step_type)
     return step_data
 
 
