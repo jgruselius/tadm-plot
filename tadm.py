@@ -156,7 +156,7 @@ def import_tadm_data(dbpath: str) -> pl.DataFrame:
     query = "SELECT CurveId,LiquidClassName,StepType,Volume,TimeStamp,StepNumber,ChannelNumber,CurvePoints FROM TadmCurve"
     
     df = pl.read_database(query, conn)
-    df = df.with_columns(pl.col("CurvePoints").map_elements(bin_to_int).alias("TADM"))
+    df = df.with_columns(pl.col("CurvePoints").map_elements(bin_to_int, return_dtype=pl.List(pl.Int16)).alias("TADM"))
     
     return df
 
@@ -171,8 +171,8 @@ def import_tolerance_band_data(dbpath: str, lc_names: set[str]) -> pl.DataFrame:
     query = "SELECT LiquidClassId,StepType,LowerToleranceBand,UpperToleranceBand FROM TadmToleranceBand"
     data = pl.read_database(query, conn)
     data = data.with_columns((
-        pl.col("LowerToleranceBand").map_elements(bin_to_int).alias("LowerToleranceBandTADM"),
-        pl.col("UpperToleranceBand").map_elements(bin_to_int).alias("UpperToleranceBandTADM")
+        pl.col("LowerToleranceBand").map_elements(bin_to_int, return_dtype=pl.List(pl.Int16)).alias("LowerToleranceBandTADM"),
+        pl.col("UpperToleranceBand").map_elements(bin_to_int, return_dtype=pl.List(pl.Int16)).alias("UpperToleranceBandTADM")
     ))
 
     data = data.join(df, how="inner", on="LiquidClassId")
