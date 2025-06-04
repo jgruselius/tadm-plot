@@ -1,18 +1,21 @@
+
+from collections.abc import Collection
 import sys
 import os
 import logging
 import argparse
 from pathlib import Path
+import importlib
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from rich.logging import RichHandler
 from InquirerPy import inquirer
 from rich.progress import Progress, TextColumn, BarColumn, MofNCompleteColumn, TimeRemainingColumn
-from typing import TypeAlias
 
-from tadm import import_tadm_data, get_liquid_class_names, import_tolerance_band_data, \
-    merge_tadm_and_tolerance_data, get_data_for_liquid_class, plot_both_steps, check_driver
+from tadm.data import get_data_module
+from tadm.plotter import get_liquid_class_names, get_data_for_liquid_class, plot_both_steps
+
 
 # Extract data from TADM database (.mdb) and plot curves together with tolerance bands
 # Created by: Joel Gruselius <github.com/jgruselius>, 2023-11
@@ -23,16 +26,13 @@ from tadm import import_tadm_data, get_liquid_class_names, import_tolerance_band
 #  [x] Detect when ODBC driver is not installed and print guide
 #  [x] Add option for the liquid class database to use
 
-LiquidClasses: TypeAlias = list[str] | set[str]
-# or with Python 3.12:
-# type LiquidClasses = list[str] | set[str]
-
 
 # Print instructions for installing ODBC driver:
 def driver_help():
     logging.error("Could not find a required ODBC driver to read MS Access databases.\n"
-                  "Install the [italic]Microsoft Access Database Engine 2010 Redistributable[/italic] from here:\n"
-                  "https://www.microsoft.com/en-US/download/details.aspx?id=13255")
+                  "FOR WINDOWS: Install the [italic]Microsoft Access Database Engine 2010 Redistributable[/italic] from here:\n"
+                  "https://www.microsoft.com/en-US/download/details.aspx?id=13255\n\n"
+                  "FOR LINUX or MAC: Install mdbtools")
 
 
 def get_path(file_name: str) -> str:
@@ -51,10 +51,10 @@ def create_progress_bar() -> Progress:
     )
 
 
-def interactive_plot(df, lc_names: LiquidClasses, args: argparse.Namespace):
+def interactive_plot(df, lc_names: Collection[str], args: argparse.Namespace):
     while True:
         lc = inquirer.fuzzy(
-            message="Select liquid:", choices=list(lc_names),  # in case of set to satisfy mypy
+            message="Select liquid:", choices=list(lc_names),
             instruction="Type or use the up/down arrow keys",
             long_instruction="Type a few letters of the liquid class name and press ENTER to select the highlighted value").execute()
         step_data = get_data_for_liquid_class(df, lc)
@@ -63,7 +63,7 @@ def interactive_plot(df, lc_names: LiquidClasses, args: argparse.Namespace):
             break
 
 
-def export_all(df, lc_names: LiquidClasses, args: argparse.Namespace):
+def export_all(df, lc_names: Collection[str], args: argparse.Namespace):
     progress_bar = create_progress_bar()
     with progress_bar:
         for lc in progress_bar.track(lc_names, description="Generating plots..."):
@@ -74,7 +74,7 @@ def export_all(df, lc_names: LiquidClasses, args: argparse.Namespace):
             plot_both_steps(step_data, file_path, True)
 
 
-def export_all_parallel(df, lc_names: LiquidClasses, args: argparse.Namespace):
+def export_all_parallel(df, lc_names: Collection[str], args: argparse.Namespace):
     progress_bar = create_progress_bar()
     with progress_bar:
         task = progress_bar.add_task("Generating plots...", total=len(lc_names))
@@ -184,8 +184,18 @@ if __name__ == '__main__':
     # At DEBUG level matplotlib spews out a lot of lines related to fonts. We want to ignore that:
     logging.getLogger("matplotlib").setLevel(logging.INFO)
 
-    if not check_driver():
+    # Determine available methods for exporting data from MDB files.
+    # Either via pyodbc and an installed MDB driver or via mdbtools command line tools:
+    try:
+        tadm_data_module = importlib.import_module(get_data_module())
+        sys.modules["tadm_data_module"] = tadm_data_module
+        from tadm_data_module import import_tadm_data, import_tolerance_band_data, merge_tadm_and_tolerance_data
+    except RuntimeError:
+        logging.error("Data export from MDB files requires either an ODBC driver or mdbtools to be installed, but neither were found.")
         driver_help()
+        sys.exit(1)
+    except Exception as e:
+        logging.error(e)
         sys.exit(1)
 
     if (args.all or args.par) and args.outdir is None:
