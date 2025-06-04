@@ -1,13 +1,19 @@
 import sys
 import os
+import importlib
 import tkinter as tk
 from tkinter import ttk
 from tkinter.messagebox import showinfo, showerror
 from tkinter import filedialog as fd
+#import sv_ttk
 
-from tadm import import_tadm_data, get_liquid_class_names, import_tolerance_band_data, \
-    merge_tadm_and_tolerance_data, get_data_for_liquid_class, plot_both_steps, check_driver
-
+import tadm.data
+from tadm.plotter import get_liquid_class_names, get_data_for_liquid_class, plot_both_steps
+# Determine available methods for exporting data from MDB files.
+# Either via pyodbc and an installed MDB driver or via mdbtools command line tools:
+tadm_data_module = importlib.import_module(tadm.data.get_data_module())
+sys.modules["tadm_data_module"] = tadm_data_module
+from tadm_data_module import import_tadm_data, import_tolerance_band_data, merge_tadm_and_tolerance_data
 
 # Extract data from TADM database (.mdb) and plot curves together with tolerance bands
 # Created by: Joel Gruselius <github.com/jgruselius>, 2023-11
@@ -15,10 +21,11 @@ from tadm import import_tadm_data, get_liquid_class_names, import_tolerance_band
 
 def driver_help():
     msg1 = "Could not find a required ODBC driver to read MS Access databases."
-    msg2 = "Install the Microsoft Access Database Engine 2010 Redistributable from here:"
+    msg2 = "For WINDOWS: Install the Microsoft Access Database Engine 2010 Redistributable from here:"
     link = "https://www.microsoft.com/en-US/download/details.aspx?id=13255"
-    print(msg1, msg2, link)
-    showerror(title="Driver not found", message=msg1, detail=f"{msg2} {link}")
+    msg3 = "FOR LINUX or MAC: Install mdbtools"
+    print(msg1, msg2, link, msg3)
+    showerror(title="Driver not found", message=msg1, detail=f"{msg2} {link} {msg3}")
 
 
 def get_path(file_name: str) -> str:
@@ -95,9 +102,10 @@ class App(tk.Tk):
         super().__init__()
         # configure the root window
         self.title("TADM plotter")
-        self.geometry("600x230")
+        self.geometry("800x380")
         if os.name == "nt":
             self.iconbitmap(get_path("icon.ico"))
+        #sv_ttk.set_theme("light")
         self.configure(background="white")
         s = ttk.Style()
         s.configure("TFrame", background="white")
@@ -111,10 +119,6 @@ class App(tk.Tk):
 
         self.df = None
         self.lc_names = None
-
-        if not check_driver():
-            driver_help()
-            self.destroy()
 
     def __create_widgets(self):
         file_frame = SelectionFrame(self)
@@ -133,6 +137,7 @@ class App(tk.Tk):
     def generate_plot(self, lc_name: str):
         step_data = get_data_for_liquid_class(self.df, lc_name)
         plot_both_steps(step_data, None, False, "tkAgg")
+
 
 
 if __name__ == "__main__":
