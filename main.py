@@ -1,7 +1,9 @@
 import os
 import sys
+import importlib
 
 import pandas as pd
+from pandas._libs.lib import fast_unique_multiple_list_gen
 import wx
 
 import numpy as np
@@ -11,9 +13,15 @@ from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as NavigationToolbar
 from matplotlib.figure import Figure
 
-from tadm import import_tadm_data, get_liquid_class_names, import_tolerance_band_data, \
-    merge_tadm_and_tolerance_data, get_data_for_liquid_class, plot_both_steps, check_driver, StepType, \
-    calc_y_limits, calc_x_limits
+
+from tadm.plotter import get_liquid_class_names, \
+    get_data_for_liquid_class, StepType, calc_y_limits, calc_x_limits
+import tadm.data
+# Determine available methods for exporting data from MDB files.
+# Either via pyodbc and an installed MDB driver or via mdbtools command line tools:
+tadm_data_module = importlib.import_module(tadm.data.get_data_module())
+sys.modules["tadm_data_module"] = tadm_data_module
+from tadm_data_module import import_tadm_data, import_tolerance_band_data, merge_tadm_and_tolerance_data
 
 
 # Extract data from TADM database (.mdb) and plot curves together with tolerance bands
@@ -38,8 +46,12 @@ class Data:
 
     @staticmethod
     def check_for_driver():
-        return check_driver()
-
+        try:
+            tadm.data.get_data_module()
+        except RuntimeError:
+            return False
+        else:
+            return True
 
 class MainFrame(wx.Frame):
     def __init__(self, parent, title, data):
@@ -57,7 +69,7 @@ class MainFrame(wx.Frame):
 
         self.Centre()
         self.Show()
-    
+
     def build_ui(self):
 
         panel = wx.Panel(self)
@@ -104,7 +116,7 @@ class MainFrame(wx.Frame):
         hbox.Add(vbox, proportion=1, flag=wx.ALL | wx.EXPAND, border=30)
         panel.SetSizer(hbox)
 
-    
+
     def on_click_exit(self, e):
         self.Close()
 
@@ -203,6 +215,15 @@ class PlotFrame(wx.Frame):
                     x = first[::2]  # odd indices
                     y = first[1::2]  # even indices
                     axis.plot(x, y, color="#cccccc", linewidth=2, linestyle="solid", alpha=0.75)
+
+            # Plot the curvepoints for all transfers in a loop:
+            # for i, r in step_data.iterrows():
+            #     p = axis.plot(r["TADM"],
+            #             linewidth=1,
+            #             color=cols[r["ChannelNumber"]-1],
+            #             alpha=0.6,
+            #             label=cols[r["ChannelNumber"]-1]
+            #     )
 
             # Plot the curvepoints for all transfers using LineCollection:
             for i, g in step_data.groupby("ChannelNumber"):
